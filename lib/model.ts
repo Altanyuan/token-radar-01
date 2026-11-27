@@ -491,38 +491,67 @@ export function parseSnapshot(text: string): Snapshot {
   } catch {
     throw new SnapshotError('snapshot.json is not JSON');
   }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SnapshotError('snapshot.json is not a JSON object');
-  const o = raw as Record<string, unknown>;
-  if (typeof o.as_of !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(o.as_of)) throw new SnapshotError('snapshot.json has no as_of date');
-  if (typeof o.source !== 'string') throw new SnapshotError('snapshot.json has no source');
-  if (typeof o.floor_usd !== 'number' || !Number.isSafeInteger(o.floor_usd) || o.floor_usd <= 0) throw new SnapshotError('snapshot.json has no floor_usd');
-  if (!Array.isArray(o.protocols)) throw new SnapshotError('snapshot.json has no protocols array');
-  if (!Array.isArray(o.watchlist) || o.watchlist.some((s) => typeof s !== 'string')) throw new SnapshotError('snapshot.json has no watchlist of slugs');
-  const protocols = o.protocols.map((v, i) => {
-    if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SnapshotError(`snapshot.json's protocol ${i} is not an object`);
-    const p = v as Record<string, unknown>;
-    if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
-      throw new SnapshotError(`snapshot.json's protocol ${i} lacks a slug, a name or a TVL`);
-    }
-    return {
-      slug: p.slug,
-      name: p.name,
-      category: typeof p.category === 'string' ? p.category : null,
-      chains: Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [],
-      tvl_usd: p.tvl_usd,
-      change_7d: typeof p.change_7d === 'number' && Number.isFinite(p.change_7d) ? p.change_7d : null,
-      mcap_usd: typeof p.mcap_usd === 'number' && Number.isFinite(p.mcap_usd) ? p.mcap_usd : null,
-      listed_at: typeof p.listed_at === 'string' ? p.listed_at : null,
-      gecko_id: typeof p.gecko_id === 'string' ? p.gecko_id : null,
-      symbol: typeof p.symbol === 'string' ? p.symbol : null,
-    };
-  });
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new SnapshotError('snapshot.json is not a JSON object');
+  }
+  const doc = raw as Record<string, unknown>;
+  const asOf = fieldString(doc, 'as_of');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) throw new SnapshotError('snapshot.json as_of is not a YYYY-MM-DD date');
+  const source = fieldString(doc, 'source');
+  const floor = fieldNumber(doc, 'floor_usd');
+  if (!Number.isSafeInteger(floor) || floor <= 0) throw new SnapshotError('snapshot.json floor_usd is not a positive whole number');
+  if (!Array.isArray(doc.protocols)) throw new SnapshotError('snapshot.json has no protocols array');
+  if (!Array.isArray(doc.watchlist) || doc.watchlist.some((s) => typeof s !== 'string')) {
+    throw new SnapshotError('snapshot.json has no watchlist of slugs');
+  }
+  const protocols = doc.protocols.map((entry, i) => readProtocol(entry, i));
+  return { as_of: asOf, source, floor_usd: floor, protocols, watchlist: doc.watchlist as string[] };
+}
+
+/** A required string field, or a refusal naming it. */
+function fieldString(doc: Record<string, unknown>, key: string): string {
+  const value = doc[key];
+  if (typeof value !== 'string') throw new SnapshotError(`snapshot.json has no ${key} string`);
+  return value;
+}
+
+/** A required number field, or a refusal naming it. */
+function fieldNumber(doc: Record<string, unknown>, key: string): number {
+  const value = doc[key];
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new SnapshotError(`snapshot.json has no ${key} number`);
+  return value;
+}
+
+/** An optional number field: the number when it is finite, else null. */
+function optionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** An optional string field: the string, else null. */
+function optionalString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+/** One protocol entry out of the snapshot's array, refused unless it carries a slug, a name and a TVL. */
+function readProtocol(entry: unknown, i: number): SnapshotProtocol {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+    throw new SnapshotError(`snapshot.json protocol ${i} is not an object`);
+  }
+  const p = entry as Record<string, unknown>;
+  if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
+    throw new SnapshotError(`snapshot.json protocol ${i} lacks a slug, a name or a TVL`);
+  }
   return {
-    as_of: o.as_of,
-    source: o.source,
-    floor_usd: o.floor_usd,
-    protocols,
-    watchlist: o.watchlist as string[],
+    slug: p.slug,
+    name: p.name,
+    category: optionalString(p.category),
+    chains: Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [],
+    tvl_usd: p.tvl_usd,
+    change_7d: optionalNumber(p.change_7d),
+    mcap_usd: optionalNumber(p.mcap_usd),
+    listed_at: optionalString(p.listed_at),
+    gecko_id: optionalString(p.gecko_id),
+    symbol: optionalString(p.symbol),
   };
 }
 
